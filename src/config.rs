@@ -1,4 +1,5 @@
 use std::{collections::HashSet, fs, path::PathBuf, process::Command};
+// use windows::Win32::UI::Input::KeyboardAndMouse::MOD_WIN;
 
 use anyhow::{anyhow, Result};
 use indexmap::IndexMap;
@@ -216,13 +217,40 @@ impl Hotkey {
             return None;
         }
         let modifier = match keys[0] {
-            "win" => [0x5b, 0x5c],
-            "alt" => [0x38, 0x38],
-            "ctrl" => [0x1d, 0x1d],
-            _ => {
-                return None;
-            }
+            // `modifier` is a **fixed-size array** (`[u32; 2]`), not a `Vec`.
+            // Arrays in Rust have their length baked into the type at compile-time,
+            // e.g. `[u32; 2]`.  A `Vec<u32>` would live on the heap and can resize,
+            // but here we need exactly two scan-codes.
+            "win" => [0x5B, 0x5C], // Left-Win 0x5B, Right-Win 0x5C — *raw* Set-1 base codes.
+            // Windows later flags the right key as “extended” (adds 0x0100),
+            // but we store the plain bytes and strip the flag in the hook.
+            "alt" => [0x38, 0x38], // Both Alt keys use base code 0x38.
+            // Right-Alt (“AltGr”) arrives as 0xE0 38 → 0x0138 in the hook,
+            // so the same masking trick (`& 0xFF`) lets it match.
+            "ctrl" => [0x1D, 0x1D], // Left-Ctrl 0x1D, Right-Ctrl starts life as 0xE0 1D.
+            // Again, we match after masking.
+            _ => return None, // Any other modifier string → invalid hotkey → bail out.
         };
+        /*
+        Array vs. vector
+
+        [0x5B, 0x5C] is an array of two u32s ([u32; 2]).
+
+        A Vec<u32> would be written vec![0x5B, 0x5C] and is heap-allocated & resizable.
+
+        We want an array because the type is part of Hotkey’s layout and must be exactly two slots.
+
+        “Raw Set-1” scan-codes
+        These are the one-byte codes from the original IBM PC table.
+        Windows adds the “extended” bit (bit 8) for right-side modifiers; we strip it in the hook with
+        scanCode & 0xFF before comparing.
+
+        Why the duplicates for Alt/Ctrl?
+        Left and right share the same base byte. Putting it in both slots keeps the array’s shape uniform, and
+        right-hand versions still match after the masking step.
+
+        That’s the precise meaning of the match block and why those particular constants are used.
+        */
         // see <https://kbdlayout.info/kbdus/overview+scancodes>
         let code = match keys[1] {
             "-" | "_" | "oem_minus" => 0x0c,
